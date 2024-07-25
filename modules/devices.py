@@ -11,6 +11,13 @@ if sys.platform == "darwin":
 if shared.cmd_opts.use_ipex:
     from modules import xpu_specific
 
+def has_hpu() -> bool:
+    return shared.cmd_opts.use_hpu
+
+def sync():
+    import habana_frameworks.torch.core as htcore
+    htcore.mark_step()
+    torch.hpu.synchronize()
 
 def has_xpu() -> bool:
     return shared.cmd_opts.use_ipex and xpu_specific.has_xpu
@@ -48,6 +55,9 @@ def get_cuda_device_string():
 
 
 def get_optimal_device_name():
+    if has_hpu():
+        return "hpu"
+    
     if torch.cuda.is_available():
         return get_cuda_device_string()
 
@@ -75,6 +85,8 @@ def get_device_for(task):
 
 
 def torch_gc():
+    if has_hpu():
+        return
 
     if torch.cuda.is_available():
         with torch.cuda.device(get_cuda_device_string()):
@@ -99,6 +111,9 @@ def torch_npu_set_device():
 
 
 def enable_tf32():
+    if has_hpu():
+        return
+    
     if torch.cuda.is_available():
 
         # enabling benchmark option seems to enable a range of cards to do fp16 when they otherwise can't
@@ -119,10 +134,10 @@ device_interrogate: torch.device = None
 device_gfpgan: torch.device = None
 device_esrgan: torch.device = None
 device_codeformer: torch.device = None
-dtype: torch.dtype = torch.float16
-dtype_vae: torch.dtype = torch.float16
-dtype_unet: torch.dtype = torch.float16
-dtype_inference: torch.dtype = torch.float16
+dtype: torch.dtype = torch.bfloat16
+dtype_vae: torch.dtype = torch.bfloat16
+dtype_unet: torch.dtype = torch.bfloat16
+dtype_inference: torch.dtype = torch.bfloat16
 unet_needs_upcast = False
 
 
@@ -205,6 +220,9 @@ def manual_cast(target_dtype):
 def autocast(disable=False):
     if disable:
         return contextlib.nullcontext()
+    
+    if has_hpu():
+        return torch.autocast(device_type="hpu", dtype=torch.bfloat16, enabled=True)
 
     if fp8 and device==cpu:
         return torch.autocast("cpu", dtype=torch.bfloat16, enabled=True)
@@ -222,7 +240,10 @@ def autocast(disable=False):
 
 
 def without_autocast(disable=False):
-    return torch.autocast("cuda", enabled=False) if torch.is_autocast_enabled() and not disable else contextlib.nullcontext()
+    if has_hpu():
+        return torch.autocast(device_type="hpu", dtype=torch.bfloat16, enabled=False) if torch.is_autocast_enabled() and not disable else contextlib.nullcontext()
+    else:
+        return torch.autocast("cuda", enabled=False) if torch.is_autocast_enabled() and not disable else contextlib.nullcontext()
 
 
 class NansException(Exception):

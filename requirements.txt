@@ -1,6 +1,5 @@
 GitPython
 Pillow
-accelerate
 
 blendmodes
 clean-fid
@@ -19,15 +18,12 @@ open-clip-torch
 
 piexif
 psutil
-pytorch_lightning
 requests
 resize-right
 
 safetensors
 scikit-image>=0.19
 tomesd
-torch
 torchdiffeq
 torchsde
-transformers==4.30.2
 pillow-avif-plugin==1.4.3

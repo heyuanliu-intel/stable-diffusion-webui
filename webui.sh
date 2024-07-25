@@ -3,6 +3,9 @@
 # Please do not make any changes to this file,  #
 # change the variables in webui-user.sh instead #
 #################################################
+export no_proxy="localhost, 127.0.0.1, ::1"
+export LOG_LEVEL_ALL=1
+export HABANA_LOGS=./logs
 
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 
@@ -67,7 +70,7 @@ then
 fi
 
 # this script cannot be run as root by default
-can_run_as_root=0
+can_run_as_root=1
 
 # read any command line flags to the webui.sh script
 while getopts "f" flag > /dev/null 2>&1

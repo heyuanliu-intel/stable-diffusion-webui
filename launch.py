@@ -1,3 +1,6 @@
+# Import habana
+import habana_frameworks.torch.core
+# end import
 from modules import launch_utils
 
 args = launch_utils.args

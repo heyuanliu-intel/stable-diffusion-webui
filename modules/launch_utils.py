@@ -376,7 +376,11 @@ def prepare_environment():
     print(f"Version: {tag}")
     print(f"Commit hash: {commit}")
 
-    if args.reinstall_torch or not is_installed("torch") or not is_installed("torchvision"):
+    if args.use_hpu:
+        args.skip_torch_cuda_test = True
+        torch_command = "pip install --upgrade-strategy eager optimum[habana]"
+
+    if args.reinstall_torch or not is_installed("torch") or not is_installed("torchvision") or not is_installed("optimum-habana"):
         run(f'"{python}" -m {torch_command}', "Installing torch and torchvision", "Couldn't install torch", live=True)
         startup_timer.record("install torch")
 
