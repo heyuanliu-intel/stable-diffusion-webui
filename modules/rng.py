@@ -74,7 +74,7 @@ def manual_seed(seed):
 
 def create_generator(seed):
     if shared.cmd_opts.use_hpu:
-        return torch.Generator().manual_seed(int(seed))
+        return torch.Generator(devices.cpu).manual_seed(int(seed))
     
     if shared.opts.randn_source == "NV":
         return rng_philox.Generator(seed)

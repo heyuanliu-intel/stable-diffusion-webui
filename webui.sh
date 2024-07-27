@@ -4,8 +4,8 @@
 # change the variables in webui-user.sh instead #
 #################################################
 export no_proxy="localhost, 127.0.0.1, ::1"
-export LOG_LEVEL_ALL=1
-export HABANA_LOGS=./logs
+# export LOG_LEVEL_ALL=1
+# export HABANA_LOGS=./logs
 
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 

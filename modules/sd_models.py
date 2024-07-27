@@ -20,6 +20,8 @@ import numpy as np
 
 model_dir = "Stable-diffusion"
 model_path = os.path.abspath(os.path.join(paths.models_path, model_dir))
+model_name_or_path = os.path.abspath(os.path.join(paths.models_path, "models--stabilityai--stable-diffusion-xl-base-1.0"))
+gaudi_config = os.path.abspath(os.path.join(paths.models_path, "gaudi_config.json"))
 
 checkpoints_list = {}
 checkpoint_aliases = {}
@@ -34,6 +36,16 @@ class ModelType(enum.Enum):
     SSD = 4
     SD3 = 5
 
+
+def load_hpu_model():
+    from optimum.habana.diffusers import GaudiStableDiffusionXLPipeline
+    kwargs = {
+        "use_habana": True,
+        "use_hpu_graphs": True,
+        "gaudi_config": gaudi_config,
+        "torch_dtype": torch.bfloat16
+    }
+    return GaudiStableDiffusionXLPipeline.from_pretrained(model_name_or_path, **kwargs)
 
 def replace_key(d, key, new_key, value):
     keys = list(d.keys())
@@ -793,6 +805,10 @@ def load_model(checkpoint_info=None, already_loaded_state_dict=None):
         send_model_to_trash(model_data.sd_model)
         model_data.sd_model = None
         devices.torch_gc()
+    
+    if devices.has_hpu():
+        model_data.sd_model = load_hpu_model()
+        return model_data.sd_model
 
     timer.record("unload existing model")
 

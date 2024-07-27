@@ -5,6 +5,8 @@ import modules.scripts
 from modules import processing, infotext_utils
 from modules.infotext_utils import create_override_settings_dict, parse_generation_parameters
 from modules.shared import opts
+from modules import devices
+from modules.hpu import generate_image_by_hpu
 import modules.shared as shared
 from modules.ui import plaintext_to_html
 from PIL import Image
@@ -80,7 +82,10 @@ def txt2img_upscale(id_task: str, request: gr.Request, gallery, gallery_index, g
         processed = modules.scripts.scripts_txt2img.run(p, *p.script_args)
 
         if processed is None:
-            processed = processing.process_images(p)
+            if devices.has_hpu():
+                processed = generate_image_by_hpu(p)
+            else:
+                processed = processing.process_images(p)
 
     shared.total_tqdm.clear()
 
@@ -106,7 +111,10 @@ def txt2img(id_task: str, request: gr.Request, *args):
         processed = modules.scripts.scripts_txt2img.run(p, *p.script_args)
 
         if processed is None:
-            processed = processing.process_images(p)
+            if devices.has_hpu():
+                processed = generate_image_by_hpu(p)
+            else:
+                processed = processing.process_images(p)
 
     shared.total_tqdm.clear()
 
