@@ -119,10 +119,8 @@ def generate_image_by_hpu(p: StableDiffusionProcessing) -> Processed:
                 kwargs["eta"] = p.eta
 
             result = pipeline(**kwargs)
-            for image in result.images:
-                images.save_image(image, p.outpath_samples, "")
             output_images += result.images
-
+            
             result.images = None
             result = None
             devices.torch_gc()
