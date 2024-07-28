@@ -1,10 +1,15 @@
 import torch
+
+import modules.sd_vae as sd_vae
 import modules.images as images
-from modules.shared import opts
-from modules.sd_models import model_data, model_name_or_path
+import modules.shared as shared
+import modules.sd_models as sd_models
+
+from modules import devices
+from modules.shared import opts, state
+from modules.sd_models import model_data, model_name_path
 from modules.processing import Processed, get_fixed_seed, create_infotext, StableDiffusionProcessing
 
-from optimum.habana.utils import set_seed
 from optimum.habana.diffusers import (GaudiDDIMScheduler, GaudiEulerAncestralDiscreteScheduler, GaudiEulerDiscreteScheduler)
 
 
@@ -12,33 +17,48 @@ def get_scheduler(scheduler_name):
     # Initialize the scheduler and the generation pipeline
     kwargs = {"timestep_spacing": "linspace"}
     if scheduler_name == "Euler":
-        print("scheduler_name:{scheduler_name} and using GaudiEulerDiscreteScheduler")
-        scheduler = GaudiEulerDiscreteScheduler.from_pretrained(model_name_or_path, subfolder="scheduler", **kwargs)
+        print(f"scheduler_name:{scheduler_name} and using GaudiEulerDiscreteScheduler")
+        scheduler = GaudiEulerDiscreteScheduler.from_pretrained(model_name_path, subfolder="scheduler", **kwargs)
     elif scheduler_name == "Euler a":
-        print("scheduler_name:{scheduler_name} and using GaudiEulerAncestralDiscreteScheduler")
-        scheduler = GaudiEulerAncestralDiscreteScheduler.from_pretrained(model_name_or_path, subfolder="scheduler", **kwargs)
+        print(f"scheduler_name:{scheduler_name} and using GaudiEulerAncestralDiscreteScheduler")
+        scheduler = GaudiEulerAncestralDiscreteScheduler.from_pretrained(model_name_path, subfolder="scheduler", **kwargs)
     else:
-        print("scheduler_name:{scheduler_name} and using GaudiDDIMScheduler")
-        scheduler = GaudiDDIMScheduler.from_pretrained(model_name_or_path, subfolder="scheduler", **kwargs)
+        print(f"scheduler_name:{scheduler_name} and using GaudiDDIMScheduler")
+        scheduler = GaudiDDIMScheduler.from_pretrained(model_name_path, subfolder="scheduler", **kwargs)
     return scheduler
 
 
-def generate_image_by_hpu(p: StableDiffusionProcessing):
+def generate_image_by_hpu(p: StableDiffusionProcessing) -> Processed:
     if isinstance(p.prompt, list):
         assert (len(p.prompt) > 0)
     else:
         assert p.prompt is not None
 
+    devices.torch_gc()
+
     seed = get_fixed_seed(p.seed)
     subseed = get_fixed_seed(p.subseed)
+
+    if p.refiner_checkpoint not in (None, "", "None", "none"):
+        p.refiner_checkpoint_info = sd_models.get_closet_checkpoint_match(p.refiner_checkpoint)
+        if p.refiner_checkpoint_info is None:
+            raise Exception(f'Could not find checkpoint with name {p.refiner_checkpoint}')
+
+    if hasattr(shared.sd_model, 'fix_dimensions'):
+        p.width, p.height = shared.sd_model.fix_dimensions(p.width, p.height)
+
+    p.sd_model_name = shared.sd_model.sd_checkpoint_info.name_for_extra
+    p.sd_model_hash = shared.sd_model.sd_model_hash
+    p.sd_vae_name = sd_vae.get_loaded_vae_name()
+    p.sd_vae_hash = sd_vae.get_loaded_vae_hash()
+
+    p.fill_fields_from_opts()
     p.setup_prompts()
 
     if isinstance(seed, list):
         p.all_seeds = seed
     else:
         p.all_seeds = [int(seed) + (x if p.subseed_strength == 0 else 0) for x in range(len(p.all_prompts))]
-
-    set_seed(p.all_seeds[0])
 
     if isinstance(subseed, list):
         p.all_subseeds = subseed
@@ -48,30 +68,68 @@ def generate_image_by_hpu(p: StableDiffusionProcessing):
     pipeline = model_data.sd_model
     pipeline.scheduler = get_scheduler(p.sampler_name)
 
-    kwargs_call = {}
-    kwargs_common = {
-        "width": p.width,
-        "height": p.height,
-        "num_images_per_prompt": p.batch_size if p.batch_size else 1,
-        "batch_size": 1,
-        "num_inference_steps": p.steps if p.steps else 20,
-        "guidance_scale": p.cfg_scale if p.cfg_scale else 7,
-        "eta": p.eta if p.eta else 0,
-        "negative_prompt": p.negative_prompts,
-        "throughput_warmup_steps": 0,
-        "profiling_warmup_steps": 0,
-        "profiling_steps": 0
-    }
-
-    print(f"kwargs_common:{kwargs_common}")
-    generator = torch.Generator(device="cpu").manual_seed(0)
-    kwargs_call["generator"] = generator
-    kwargs_call.update(kwargs_common)
-    outputs = pipeline(prompt=p.prompt, **kwargs_call)
-
     infotexts = []
-    output_images = outputs.images
-    infotexts.append(Processed(p, []).infotext(p, 0))
+    output_images = []
+    with torch.no_grad():
+        with devices.autocast():
+            p.init(p.all_prompts, p.all_seeds, p.all_subseeds)
+
+        if state.job_count == -1:
+            state.job_count = p.n_iter
+
+        for n in range(p.n_iter):
+            p.iteration = n
+
+            if state.skipped:
+                state.skipped = False
+
+            if state.interrupted or state.stopping_generation:
+                break
+
+            p.prompts = p.all_prompts[n * p.batch_size:(n + 1) * p.batch_size]
+            p.negative_prompts = p.all_negative_prompts[n * p.batch_size:(n + 1) * p.batch_size]
+            p.seeds = p.all_seeds[n * p.batch_size:(n + 1) * p.batch_size]
+            p.subseeds = p.all_subseeds[n * p.batch_size:(n + 1) * p.batch_size]
+
+            if len(p.prompts) == 0:
+                break
+
+            if p.n_iter > 1:
+                shared.state.job = f"Batch {n+1} out of {p.n_iter}"
+
+            generator = torch.Generator(device="cpu")
+            generator.manual_seed(p.seed + n)
+
+            kwargs = {
+                "prompt": p.prompts,
+                "negative_prompt": p.negative_prompts,
+                "num_inference_steps": p.steps,
+                "num_images_per_prompt": 1,
+                "height": p.height,
+                "width": p.width,
+                "guidance_scale": p.cfg_scale if p.cfg_scale else 7,
+                "generator": generator,
+                "output_type": "pil",
+                "throughput_warmup_steps": 0,
+                "profiling_warmup_steps": 0,
+                "profiling_steps": 0
+            }
+
+            if p.eta is not None:
+                kwargs["eta"] = p.eta
+
+            result = pipeline(**kwargs)
+            for image in result.images:
+                images.save_image(image, p.outpath_samples, "")
+            output_images += result.images
+
+            result.images = None
+            result = None
+            devices.torch_gc()
+            state.nextjob()
+
+    if not infotexts:
+        infotexts.append(Processed(p, []).infotext(p, 0))
 
     def infotext(index=0, use_main_prompt=False):
         return create_infotext(p, p.prompts, p.seeds, p.subseeds, use_main_prompt=use_main_prompt, index=index, all_negative_prompts=p.negative_prompts)
@@ -91,14 +149,15 @@ def generate_image_by_hpu(p: StableDiffusionProcessing):
         if opts.grid_save:
             images.save_image(grid, p.outpath_grids, "grid", p.all_seeds[0], p.all_prompts[0], opts.grid_format, info=infotext(use_main_prompt=True), short_filename=not opts.grid_extended_filename, p=p, grid=True)
 
-    res = Processed(
+    devices.torch_gc()
+
+    return Processed(
         p,
         images_list=output_images,
         seed=p.all_seeds[0],
         info=infotexts[0],
+        comments="",
         subseed=p.all_subseeds[0],
         index_of_first_image=index_of_first_image,
         infotexts=infotexts,
     )
-
-    return res

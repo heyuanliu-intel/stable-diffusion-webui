@@ -20,7 +20,7 @@ import numpy as np
 
 model_dir = "Stable-diffusion"
 model_path = os.path.abspath(os.path.join(paths.models_path, model_dir))
-model_name_or_path = os.path.abspath(os.path.join(paths.models_path, "models--stabilityai--stable-diffusion-xl-base-1.0"))
+model_name_path = os.path.abspath(os.path.join(paths.models_path, "models--stabilityai--stable-diffusion-xl-base-1.0"))
 gaudi_config = os.path.abspath(os.path.join(paths.models_path, "gaudi_config.json"))
 
 checkpoints_list = {}
@@ -37,15 +37,24 @@ class ModelType(enum.Enum):
     SD3 = 5
 
 
-def load_hpu_model():
+def load_gaudi_sd_pipeline(checkpoint_info):
     from optimum.habana.diffusers import GaudiStableDiffusionXLPipeline
+
     kwargs = {
         "use_habana": True,
         "use_hpu_graphs": True,
         "gaudi_config": gaudi_config,
         "torch_dtype": torch.bfloat16
     }
-    return GaudiStableDiffusionXLPipeline.from_pretrained(model_name_or_path, **kwargs)
+
+    pipeline = GaudiStableDiffusionXLPipeline.from_pretrained(model_name_path, **kwargs)
+    pipeline.sd_checkpoint_info = checkpoint_info
+    pipeline.sd_model_hash = checkpoint_info.hash
+    pipeline.cond_stage_key = "txt"
+    pipeline.first_stage_model = None
+    pipeline.cond_stage_model = None
+    return pipeline
+
 
 def replace_key(d, key, new_key, value):
     keys = list(d.keys())
@@ -258,7 +267,7 @@ checkpoint_dict_replacements_sd1 = {
     'cond_stage_model.transformer.final_layer_norm.': 'cond_stage_model.transformer.text_model.final_layer_norm.',
 }
 
-checkpoint_dict_replacements_sd2_turbo = { # Converts SD 2.1 Turbo from SGM to LDM format.
+checkpoint_dict_replacements_sd2_turbo = {  # Converts SD 2.1 Turbo from SGM to LDM format.
     'conditioner.embedders.0.': 'cond_stage_model.',
 }
 
@@ -316,7 +325,7 @@ def read_metadata_from_safetensors(filename):
                     except Exception:
                         pass
         except Exception:
-             errors.report(f"Error reading metadata from file: {filename}", exc_info=True)
+            errors.report(f"Error reading metadata from file: {filename}", exc_info=True)
 
         return res
 
@@ -636,7 +645,6 @@ def repair_config(sd_config, state_dict=None):
         sd_config.model.params.unet_config.params.use_checkpoint = False
 
 
-
 def rescale_zero_terminal_snr_abar(alphas_cumprod):
     alphas_bar_sqrt = alphas_cumprod.sqrt()
 
@@ -805,9 +813,9 @@ def load_model(checkpoint_info=None, already_loaded_state_dict=None):
         send_model_to_trash(model_data.sd_model)
         model_data.sd_model = None
         devices.torch_gc()
-    
+
     if devices.has_hpu():
-        model_data.sd_model = load_hpu_model()
+        model_data.sd_model = load_gaudi_sd_pipeline(checkpoint_info)
         return model_data.sd_model
 
     timer.record("unload existing model")
@@ -837,7 +845,7 @@ def load_model(checkpoint_info=None, already_loaded_state_dict=None):
 
     except Exception as e:
         print('Failed to create model quickly; will retry using slow method.', file=sys.stderr)
-        #errors.display(e, "creating model quickly", full_traceback=True)
+        # errors.display(e, "creating model quickly", full_traceback=True)
 
     if sd_model is None:
         with sd_disable_initialization.InitializeOnMeta():
