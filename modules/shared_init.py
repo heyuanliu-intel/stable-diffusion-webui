@@ -55,6 +55,6 @@ def initialize():
     shared.total_tqdm = shared_total_tqdm.TotalTQDM()
 
     from modules import memmon, devices
-    shared.mem_mon = memmon.MemUsageMonitor("MemMon", devices.device, shared.opts)
+    shared.mem_mon = memmon.HPUMemUsageMonitor("MemMon", devices.device, shared.opts)
     shared.mem_mon.start()
 

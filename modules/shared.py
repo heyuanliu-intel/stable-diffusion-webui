@@ -71,7 +71,7 @@ gradio_theme = gr.themes.Base()
 
 total_tqdm: 'shared_total_tqdm.TotalTQDM' = None
 
-mem_mon: 'memmon.MemUsageMonitor' = None
+mem_mon: 'memmon.HPUMemUsageMonitor' = None
 
 options_section = options.options_section
 OptionInfo = options.OptionInfo
