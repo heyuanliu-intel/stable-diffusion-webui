@@ -6,6 +6,7 @@
 export no_proxy="localhost, 127.0.0.1, ::1"
 # export LOG_LEVEL_ALL=1
 # export HABANA_LOGS=./logs
+export PT_HPU_RECIPE_CACHE_CONFIG=/root/cache/,false,102400
 
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 
